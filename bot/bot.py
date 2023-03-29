@@ -15,7 +15,10 @@ from telegram import (
     User,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    BotCommand
+    BotCommand,
+    Bot,
+    ChatMemberLeft,
+    ChatMemberBanned
 )
 from telegram.ext import (
     Application,
@@ -91,6 +94,7 @@ async def register_user_if_not_exists(update: Update, context: CallbackContext, 
 
 
 async def start_handle(update: Update, context: CallbackContext):
+    if await is_user_not_in_whitelist_groups(update, context): return
     await register_user_if_not_exists(update, context, update.message.from_user)
     user_id = update.message.from_user.id
 
@@ -106,6 +110,7 @@ async def start_handle(update: Update, context: CallbackContext):
 
 
 async def help_handle(update: Update, context: CallbackContext):
+    if await is_user_not_in_whitelist_groups(update, context): return
     await register_user_if_not_exists(update, context, update.message.from_user)
     user_id = update.message.from_user.id
     db.set_user_attribute(user_id, "last_interaction", datetime.now())
@@ -113,6 +118,7 @@ async def help_handle(update: Update, context: CallbackContext):
 
 
 async def retry_handle(update: Update, context: CallbackContext):
+    if await is_user_not_in_whitelist_groups(update, context): return
     await register_user_if_not_exists(update, context, update.message.from_user)
     if await is_previous_message_not_answered_yet(update, context): return
 
@@ -131,6 +137,7 @@ async def retry_handle(update: Update, context: CallbackContext):
 
 
 async def message_handle(update: Update, context: CallbackContext, message=None, use_new_dialog_timeout=True):
+    if await is_user_not_in_whitelist_groups(update, context): return
     # check if message is edited
     if update.edited_message is not None:
         await edited_message_handle(update, context)
@@ -244,8 +251,39 @@ async def is_previous_message_not_answered_yet(update: Update, context: Callback
     else:
         return False
 
+async def is_user_not_in_whitelist_groups(update: Update, context: CallbackContext):
+    if len(config.allow_users_in_telegram_groups) == 0:
+        return False
+    else:
+        user_id = update.message.from_user.id
+
+        if db.check_if_user_exists(user_id):
+            return False;
+
+        bot = Bot(token=config.telegram_token)
+        user_ids = []
+
+        for group_id in config.allow_users_in_telegram_groups:
+            chat = await bot.get_chat(chat_id=group_id)
+            print(chat)
+            memberInfo = await chat.get_member(user_id)
+            print(memberInfo)
+            print(isinstance(memberInfo, ChatMemberBanned))
+            print(isinstance(memberInfo, ChatMemberLeft))
+            if not (isinstance(memberInfo, ChatMemberBanned) or isinstance(memberInfo, ChatMemberLeft)):
+                user_ids.append(user_id)
+
+        distinct_user_ids_list = list(set(user_ids))
+        print(distinct_user_ids_list)
+        if user_id in distinct_user_ids_list:
+            return False
+        else:
+            await update.message.reply_text("You are not allowed to use bot")
+            return True    
+
 
 async def voice_message_handle(update: Update, context: CallbackContext):
+    if await is_user_not_in_whitelist_groups(update, context): return
     await register_user_if_not_exists(update, context, update.message.from_user)
     if await is_previous_message_not_answered_yet(update, context): return
 
@@ -279,6 +317,7 @@ async def voice_message_handle(update: Update, context: CallbackContext):
 
 
 async def new_dialog_handle(update: Update, context: CallbackContext):
+    if await is_user_not_in_whitelist_groups(update, context): return
     await register_user_if_not_exists(update, context, update.message.from_user)
     if await is_previous_message_not_answered_yet(update, context): return
 
@@ -293,6 +332,7 @@ async def new_dialog_handle(update: Update, context: CallbackContext):
 
 
 async def show_chat_modes_handle(update: Update, context: CallbackContext):
+    if await is_user_not_in_whitelist_groups(update, context): return
     await register_user_if_not_exists(update, context, update.message.from_user)
     if await is_previous_message_not_answered_yet(update, context): return
 
@@ -308,6 +348,7 @@ async def show_chat_modes_handle(update: Update, context: CallbackContext):
 
 
 async def set_chat_mode_handle(update: Update, context: CallbackContext):
+    if await is_user_not_in_whitelist_groups(update, context): return
     await register_user_if_not_exists(update.callback_query, context, update.callback_query.from_user)
     user_id = update.callback_query.from_user.id
 
@@ -349,6 +390,7 @@ def get_settings_menu(user_id: int):
 
 
 async def settings_handle(update: Update, context: CallbackContext):
+    if await is_user_not_in_whitelist_groups(update, context): return
     await register_user_if_not_exists(update, context, update.message.from_user)
     if await is_previous_message_not_answered_yet(update, context): return
 
@@ -360,6 +402,7 @@ async def settings_handle(update: Update, context: CallbackContext):
 
 
 async def set_settings_handle(update: Update, context: CallbackContext):
+    if await is_user_not_in_whitelist_groups(update, context): return
     await register_user_if_not_exists(update.callback_query, context, update.callback_query.from_user)
     user_id = update.callback_query.from_user.id
 
@@ -379,6 +422,7 @@ async def set_settings_handle(update: Update, context: CallbackContext):
 
 
 async def show_balance_handle(update: Update, context: CallbackContext):
+    if await is_user_not_in_whitelist_groups(update, context): return
     await register_user_if_not_exists(update, context, update.message.from_user)
 
     user_id = update.message.from_user.id
