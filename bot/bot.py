@@ -273,7 +273,7 @@ async def is_user_not_in_whitelist_groups(update: Update, context: CallbackConte
         db.set_user_attribute(user_id, "approval_status", "PENDING")
         
         bot = Bot(token=config.telegram_token)
-        text, reply_markup = get_user_info_menu(user_id)
+        text, reply_markup = get_user_info_menu(user_id, "")
         await bot.send_message(config.admin_group, text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
         await update.message.reply_text("Please wait for admin approval", reply_to_message_id=update.message.id, parse_mode=ParseMode.HTML)
         return True; 
@@ -385,7 +385,7 @@ def get_settings_menu(user_id: int):
 
     return text, reply_markup
 
-def get_user_info_menu(user_id: int, admin = None):
+def get_user_info_menu(user_id: int, admin: str):
     current_user = db.get_user(user_id)
     text = current_user["first_name"] + " " + current_user["last_name"] + "(@" + current_user["username"] + ")"
     text += "\n\nSelect:"
@@ -397,16 +397,18 @@ def get_user_info_menu(user_id: int, admin = None):
     rejectTitle = "Reject";
     byAdmin = "";
 
-    if not admin is None:
-        byAdmin = " by " + admin.first_name + " " + admin.last_name + " (" + admin.username + ")"
+    print(current_user)
+
+    if admin is not None and len(admin) > 0:
+        byAdmin = " by " + admin
 
     if (current_user["approval_status"] == "APPROVED"):
         approveTitle = "✅ Approved" + byAdmin;
     elif (current_user["approval_status"] == "REJECTED"):
         rejectTitle = "✅ Rejected" + byAdmin;
 
-    buttons.append(InlineKeyboardButton(approveTitle, callback_data=f"set_user_status|APPROVE|{user_id}"))
-    buttons.append(InlineKeyboardButton(rejectTitle, callback_data=f"set_user_status|REJECT|{user_id}"))
+    buttons.append(InlineKeyboardButton(approveTitle, callback_data=f"set_user_status|APPROVED|{user_id}"))
+    buttons.append(InlineKeyboardButton(rejectTitle, callback_data=f"set_user_status|REJECTED|{user_id}"))
         
     reply_markup = InlineKeyboardMarkup([buttons])
 
@@ -454,27 +456,25 @@ async def set_user_approval_status_handle(update: Update, context: CallbackConte
 
     if not (isinstance(memberInfo, ChatMemberBanned) or isinstance(memberInfo, ChatMemberLeft)):
         query = update.callback_query
-
-        print(query)
         await query.answer()
 
         _, approval_status, target_user_id = query.data.split("|")
-        db.set_user_attribute(int(target_user_id), "approval_status", approval_status)
+        db.user_collection.update_one({"_id": int(target_user_id)}, {"$set": {"approval_status": approval_status}})
 
-        text = ""
+        user_text = ""
         if (approval_status == "APPROVED"):
-            text = "You can use the bot now"
+            user_text = "You can use the bot now"
         else:
-            text = "You have been rejected to use the bot"
+            user_text = "You have been rejected to use the bot"
 
-        text, reply_markup = get_user_info_menu(target_user_id, update.callback_query.from_user)
+        text, reply_markup = get_user_info_menu(int(target_user_id),  update.callback_query.from_user.first_name + " " + update.callback_query.from_user.last_name + " (" + update.callback_query.from_user.username + ")")
         try:
             await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
         except telegram.error.BadRequest as e:
             if str(e).startswith("Message is not modified"):
                 pass
 
-        await bot.send_message(target_user_id, text, parse_mode=ParseMode.HTML)
+        await bot.send_message(int(target_user_id), user_text, parse_mode=ParseMode.HTML)
     else:
         await update.message.reply_text("You are not allowed to do this command")
 
