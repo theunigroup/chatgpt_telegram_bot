@@ -252,28 +252,31 @@ async def is_previous_message_not_answered_yet(update: Update, context: Callback
         return False
 
 async def is_user_not_in_whitelist_groups(update: Update, context: CallbackContext):
-    if len(config.allow_users_in_telegram_groups) == 0:
-        return False
-    else:
-        user_id = update.message.from_user.id
+    user_id = update.message.from_user.id
 
-        if db.check_if_user_exists(user_id):
-            return db.get_user_attribute(user_id, "approval_status") == "APPROVED";
-        else:
-            db.add_new_user(
-                user_id,
-                update.message.chat_id,
-                username=update.message.from_user.username,
-                first_name=update.message.from_user.first_name,
-                last_name=update.message.from_user.last_name
-            )
-            db.set_user_attribute(user_id, "approval_status", "PENDING")
-            
-            bot = Bot(token=config.telegram_token)
-            text, reply_markup = get_user_info_menu(user_id)
-            await bot.send_message(config.admin_group, text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-            
-            return True;   
+    if db.check_if_user_exists(user_id):
+        if db.get_user_attribute(user_id, "approval_status") == "APPROVED":
+            return False;
+        await update.message.reply_text("Please wait for admin approval", reply_to_message_id=update.message.id, parse_mode=ParseMode.HTML)
+        return True
+    else:
+        db.add_new_user(
+            user_id,
+            update.message.chat_id,
+            username=update.message.from_user.username,
+            first_name=update.message.from_user.first_name,
+            last_name=update.message.from_user.last_name
+        )
+        if user_id not in user_semaphores:
+            user_semaphores[user_id] = asyncio.Semaphore(1)
+
+        db.set_user_attribute(user_id, "approval_status", "PENDING")
+        
+        bot = Bot(token=config.telegram_token)
+        text, reply_markup = get_user_info_menu(user_id)
+        await bot.send_message(config.admin_group, text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+        await update.message.reply_text("Please wait for admin approval", reply_to_message_id=update.message.id, parse_mode=ParseMode.HTML)
+        return True; 
 
 
 async def voice_message_handle(update: Update, context: CallbackContext):
@@ -448,9 +451,6 @@ async def set_user_approval_status_handle(update: Update, context: CallbackConte
 
     # check if user is is admin groups
     memberInfo = await bot.get_chat_member(config.admin_group, user_id)
-    print(memberInfo)
-    print(isinstance(memberInfo, ChatMemberBanned))
-    print(isinstance(memberInfo, ChatMemberLeft))
 
     if not (isinstance(memberInfo, ChatMemberBanned) or isinstance(memberInfo, ChatMemberLeft)):
         query = update.callback_query
@@ -459,7 +459,7 @@ async def set_user_approval_status_handle(update: Update, context: CallbackConte
         await query.answer()
 
         _, approval_status, target_user_id = query.data.split("|")
-        db.set_user_attribute(target_user_id, "approval_status", approval_status)
+        db.set_user_attribute(int(target_user_id), "approval_status", approval_status)
 
         text = ""
         if (approval_status == "APPROVED"):
