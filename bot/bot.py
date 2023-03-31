@@ -64,7 +64,7 @@ async def register_user_if_not_exists(update: Update, context: CallbackContext, 
             update.message.chat_id,
             username=user.username,
             first_name=user.first_name,
-            last_name= user.last_name
+            last_name=user.last_name
         )
         db.start_new_dialog(user.id)
 
@@ -258,28 +258,22 @@ async def is_user_not_in_whitelist_groups(update: Update, context: CallbackConte
         user_id = update.message.from_user.id
 
         if db.check_if_user_exists(user_id):
-            return False;
-
-        bot = Bot(token=config.telegram_token)
-        user_ids = []
-
-        for group_id in config.allow_users_in_telegram_groups:
-            chat = await bot.get_chat(chat_id=group_id)
-            print(chat)
-            memberInfo = await chat.get_member(user_id)
-            print(memberInfo)
-            print(isinstance(memberInfo, ChatMemberBanned))
-            print(isinstance(memberInfo, ChatMemberLeft))
-            if not (isinstance(memberInfo, ChatMemberBanned) or isinstance(memberInfo, ChatMemberLeft)):
-                user_ids.append(user_id)
-
-        distinct_user_ids_list = list(set(user_ids))
-        print(distinct_user_ids_list)
-        if user_id in distinct_user_ids_list:
-            return False
+            return db.get_user_attribute(user_id, "approval_status") == "APPROVED";
         else:
-            await update.message.reply_text("You are not allowed to use bot")
-            return True    
+            db.add_new_user(
+                user_id,
+                update.message.chat_id,
+                username=update.message.from_user.username,
+                first_name=update.message.from_user.first_name,
+                last_name=update.message.from_user.last_name
+            )
+            db.set_user_attribute(user_id, "approval_status", "PENDING")
+            
+            bot = Bot(token=config.telegram_token)
+            text, reply_markup = get_user_info_menu(user_id)
+            await bot.send_message(config.admin_group, text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+            
+            return True;   
 
 
 async def voice_message_handle(update: Update, context: CallbackContext):
@@ -388,6 +382,33 @@ def get_settings_menu(user_id: int):
 
     return text, reply_markup
 
+def get_user_info_menu(user_id: int, admin = None):
+    current_user = db.get_user(user_id)
+    text = current_user["first_name"] + " " + current_user["last_name"] + "(@" + current_user["username"] + ")"
+    text += "\n\nSelect:"
+
+    # buttons to choose models
+    buttons = []
+
+    approveTitle = "Approve";
+    rejectTitle = "Reject";
+    byAdmin = "";
+
+    if not admin is None:
+        byAdmin = " by " + admin.first_name + " " + admin.last_name + " (" + admin.username + ")"
+
+    if (current_user["approval_status"] == "APPROVED"):
+        approveTitle = "✅ Approved" + byAdmin;
+    elif (current_user["approval_status"] == "REJECTED"):
+        rejectTitle = "✅ Rejected" + byAdmin;
+
+    buttons.append(InlineKeyboardButton(approveTitle, callback_data=f"set_user_status|APPROVE|{user_id}"))
+    buttons.append(InlineKeyboardButton(rejectTitle, callback_data=f"set_user_status|REJECT|{user_id}"))
+        
+    reply_markup = InlineKeyboardMarkup([buttons])
+
+    return text, reply_markup
+
 
 async def settings_handle(update: Update, context: CallbackContext):
     if await is_user_not_in_whitelist_groups(update, context): return
@@ -420,6 +441,42 @@ async def set_settings_handle(update: Update, context: CallbackContext):
         if str(e).startswith("Message is not modified"):
             pass
 
+async def set_user_approval_status_handle(update: Update, context: CallbackContext):
+    bot = Bot(token=config.telegram_token)
+    user_id = update.callback_query.from_user.id
+    print(user_id)
+
+    # check if user is is admin groups
+    memberInfo = await bot.get_chat_member(config.admin_group, user_id)
+    print(memberInfo)
+    print(isinstance(memberInfo, ChatMemberBanned))
+    print(isinstance(memberInfo, ChatMemberLeft))
+
+    if not (isinstance(memberInfo, ChatMemberBanned) or isinstance(memberInfo, ChatMemberLeft)):
+        query = update.callback_query
+
+        print(query)
+        await query.answer()
+
+        _, approval_status, target_user_id = query.data.split("|")
+        db.set_user_attribute(target_user_id, "approval_status", approval_status)
+
+        text = ""
+        if (approval_status == "APPROVED"):
+            text = "You can use the bot now"
+        else:
+            text = "You have been rejected to use the bot"
+
+        text, reply_markup = get_user_info_menu(target_user_id, update.callback_query.from_user)
+        try:
+            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+        except telegram.error.BadRequest as e:
+            if str(e).startswith("Message is not modified"):
+                pass
+
+        await bot.send_message(target_user_id, text, parse_mode=ParseMode.HTML)
+    else:
+        await update.message.reply_text("You are not allowed to do this command")
 
 async def show_balance_handle(update: Update, context: CallbackContext):
     if await is_user_not_in_whitelist_groups(update, context): return
@@ -530,6 +587,7 @@ def run_bot() -> None:
 
     application.add_handler(CommandHandler("settings", settings_handle, filters=user_filter))
     application.add_handler(CallbackQueryHandler(set_settings_handle, pattern="^set_settings"))
+    application.add_handler(CallbackQueryHandler(set_user_approval_status_handle, pattern="^set_user_status"))
 
     application.add_handler(CommandHandler("balance", show_balance_handle, filters=user_filter))
 
